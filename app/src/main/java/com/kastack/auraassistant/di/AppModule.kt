@@ -23,10 +23,10 @@ object AppModule {
     @Singleton
     fun provideAuraDatabase(@ApplicationContext context: Context): AuraDatabase =
         Room.databaseBuilder(
-            context,
-            AuraDatabase::class.java,
-            "aura_database"
-        ).fallbackToDestructiveMigration().build()
+                context,
+                AuraDatabase::class.java,
+                "aura_database"
+            ).fallbackToDestructiveMigration(false).build()
 
     @Provides
     @Singleton
