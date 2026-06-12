@@ -25,5 +25,6 @@ interface ReminderRepository {
     fun getTodayReminders(): Flow<List<Reminder>>
     suspend fun insertReminder(reminder: Reminder): Long
     suspend fun markCompleted(id: Long)
+    suspend fun deleteReminder(id: Long)
     fun getUnsyncedReminders(): Flow<List<Reminder>>
 }

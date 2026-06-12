@@ -1,16 +1,18 @@
 package com.kastack.auraassistant.presentation.home
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.content.Context
+import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kastack.auraassistant.audio.AudioRecorderManager
 import com.kastack.auraassistant.audio.SpeechRecognizerManager
 import com.kastack.auraassistant.audio.SpeechState
+import com.kastack.auraassistant.data.sync.SyncManager
 import com.kastack.auraassistant.domain.models.AssistantState
 import com.kastack.auraassistant.domain.models.Reminder
+import com.kastack.auraassistant.domain.models.SyncStatus
 import com.kastack.auraassistant.domain.models.UserProfile
 import com.kastack.auraassistant.domain.repositories.ReminderRepository
 import com.kastack.auraassistant.domain.repositories.UserProfileRepository
@@ -19,12 +21,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -32,7 +29,6 @@ data class HomeUiState(
     val userProfile: UserProfile = UserProfile(),
     val inputText: String = "",
     val showKeyboard: Boolean = false,
-    val todayReminders: List<Reminder> = emptyList(),
     val hasMicPermission: Boolean = false
 )
 
@@ -42,8 +38,9 @@ class HomeViewModel @Inject constructor(
     private val userProfileRepository: UserProfileRepository,
     private val reminderRepository: ReminderRepository,
     private val sendMessageUseCase: SendMessageUseCase,
-    val audioRecorderManager: AudioRecorderManager,
-    val speechRecognizerManager: SpeechRecognizerManager
+    private val audioRecorderManager: AudioRecorderManager,
+    private val speechRecognizerManager: SpeechRecognizerManager,
+    private val syncManager: SyncManager               // ← Phase 8
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -57,6 +54,18 @@ class HomeViewModel @Inject constructor(
 
     val speechState: StateFlow<SpeechState> = speechRecognizerManager.state
 
+    /** Extra 4 — exposes SyncManager's status to the UI */
+    val syncStatus: StateFlow<SyncStatus> = syncManager.syncStatus
+
+    /** Extra 5 — today's reminders, updated in real-time from Room */
+    val todayReminders: StateFlow<List<Reminder>> = reminderRepository
+        .getTodayReminders()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList()
+        )
+
     private var pipelineJob: Job? = null
     private var amplitudeJob: Job? = null
 
@@ -66,38 +75,63 @@ class HomeViewModel @Inject constructor(
                 _uiState.update { it.copy(userProfile = profile) }
             }
         }
-        viewModelScope.launch {
-            reminderRepository.getTodayReminders().collect { reminders ->
-                _uiState.update { it.copy(todayReminders = reminders) }
-            }
-        }
+
         viewModelScope.launch {
             speechRecognizerManager.state.collect { speechState ->
-                if (speechState is SpeechState.Result) {
-                    stopListening()
-                    sendMessage(speechState.text, inputType = "voice")
+                when (speechState) {
+                    is SpeechState.Result -> {
+                        stopAmplitudeCollection()
+                        if (_assistantState.value is AssistantState.Listening) {
+                            _assistantState.value = AssistantState.Processing(speechState.text)
+                        }
+                        sendMessage(speechState.text, inputType = "voice")
+                        speechRecognizerManager.resetToIdle()
+                    }
+                    is SpeechState.Error -> {
+                        stopAmplitudeCollection()
+                        if (_assistantState.value is AssistantState.Listening) {
+                            _assistantState.value = AssistantState.Error(
+                                message = speechState.msg,
+                                retryInput = null
+                            )
+                        }
+                    }
+                    else -> {}
                 }
             }
         }
+
         checkMicPermission()
+
+        // Kick off a sync on launch
+        syncManager.requestSync()
     }
 
     fun checkMicPermission() {
-        val hasPermission = ContextCompat.checkSelfPermission(
+        val granted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
-        _uiState.update { it.copy(hasMicPermission = hasPermission) }
+        _uiState.update { it.copy(hasMicPermission = granted) }
     }
 
     fun onInputChange(text: String) = _uiState.update { it.copy(inputText = text) }
-
-    fun toggleKeyboard() = _uiState.update { it.copy(showKeyboard = !it.showKeyboard) }
 
     fun startListening() {
         if (!_uiState.value.hasMicPermission) return
         _assistantState.value = AssistantState.Listening
         speechRecognizerManager.startListening()
+        startAmplitudeCollection()
+    }
 
+    fun stopListening() {
+        speechRecognizerManager.stopListening()
+        stopAmplitudeCollection()
+        if (_assistantState.value is AssistantState.Listening) {
+            _assistantState.value = AssistantState.Idle
+        }
+    }
+
+    private fun startAmplitudeCollection() {
         amplitudeJob?.cancel()
         amplitudeJob = viewModelScope.launch {
             @Suppress("MissingPermission")
@@ -107,13 +141,10 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun stopListening() {
-        speechRecognizerManager.stopListening()
+    private fun stopAmplitudeCollection() {
         amplitudeJob?.cancel()
+        amplitudeJob = null
         _amplitude.value = 0f
-        if (_assistantState.value is AssistantState.Listening) {
-            _assistantState.value = AssistantState.Idle
-        }
     }
 
     fun sendMessage(text: String = _uiState.value.inputText, inputType: String = "text") {
@@ -133,11 +164,11 @@ class HomeViewModel @Inject constructor(
                 )
             } catch (e: TimeoutCancellationException) {
                 _assistantState.value = AssistantState.Error(
-                    message = "Response took too long.",
+                    message = "Response took too long — please try again.",
                     retryInput = trimmed
                 )
             } catch (e: Exception) {
-                if (e.message?.contains("cancelled") == true) return@launch
+                if (e.message?.contains("cancelled", ignoreCase = true) == true) return@launch
                 _assistantState.value = AssistantState.Error(
                     message = "Something went wrong.",
                     retryInput = trimmed
@@ -154,12 +185,13 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun dismissError() { _assistantState.value = AssistantState.Idle }
+    fun dismissError() {
+        _assistantState.value = AssistantState.Idle
+    }
 
     override fun onCleared() {
         super.onCleared()
         speechRecognizerManager.destroy()
-        audioRecorderManager.stopRecording()
         pipelineJob?.cancel()
         amplitudeJob?.cancel()
     }

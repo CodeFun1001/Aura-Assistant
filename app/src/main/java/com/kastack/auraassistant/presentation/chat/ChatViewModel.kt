@@ -14,16 +14,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class ChatUiState(
-    val inputText: String = "",
+    val inputText: String   = "",
     val showKeyboard: Boolean = false,
     val assistantState: AssistantState = AssistantState.Idle,
     val userProfile: UserProfile = UserProfile()
@@ -57,13 +55,12 @@ class ChatViewModel @Inject constructor(
                 _uiState.update { it.copy(userProfile = profile) }
             }
         }
-        viewModelScope.launch {
-            speechRecognizerManager.state.collect { speechState ->
-                if (speechState is SpeechState.Result) {
-                    sendMessage(speechState.text, inputType = "voice")
-                }
-            }
-        }
+    }
+
+    fun onSpeechRecognised(text: String) {
+        _uiState.update { it.copy(inputText = text, showKeyboard = true) }
+        _assistantState.value = AssistantState.Idle
+        speechRecognizerManager.resetToIdle()
     }
 
     fun onInputChange(text: String) {
@@ -75,13 +72,8 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun toggleKeyboard() {
-        _uiState.update { it.copy(showKeyboard = !it.showKeyboard) }
-    }
-
-    fun hideKeyboard() {
-        _uiState.update { it.copy(showKeyboard = false) }
-    }
+    fun toggleKeyboard() = _uiState.update { it.copy(showKeyboard = !it.showKeyboard) }
+    fun hideKeyboard()   = _uiState.update { it.copy(showKeyboard = false) }
 
     fun sendMessage(text: String = _uiState.value.inputText, inputType: String = "text") {
         val trimmed = text.trim()
@@ -94,22 +86,20 @@ class ChatViewModel @Inject constructor(
         pipelineJob = viewModelScope.launch {
             try {
                 sendMessageUseCase(
-                    input = trimmed,
-                    inputType = inputType,
+                    input       = trimmed,
+                    inputType   = inputType,
                     userProfile = _uiState.value.userProfile,
-                    stateFlow = _assistantState
+                    stateFlow   = _assistantState
                 )
             } catch (e: TimeoutCancellationException) {
                 _assistantState.value = AssistantState.Error(
-                    message = "Response took too long. Please try again.",
+                    message    = "Response took too long. Please try again.",
                     retryInput = trimmed
                 )
             } catch (e: Exception) {
-                if (e.message?.contains("StandaloneCoroutine was cancelled") == true) {
-                    return@launch
-                }
+                if (e.message?.contains("StandaloneCoroutine was cancelled") == true) return@launch
                 _assistantState.value = AssistantState.Error(
-                    message = "Something went wrong: ${e.message}",
+                    message    = "Something went wrong: ${e.message}",
                     retryInput = trimmed
                 )
             }
@@ -124,9 +114,7 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun dismissError() {
-        _assistantState.value = AssistantState.Idle
-    }
+    fun dismissError() { _assistantState.value = AssistantState.Idle }
 
     fun startListening() {
         _assistantState.value = AssistantState.Listening

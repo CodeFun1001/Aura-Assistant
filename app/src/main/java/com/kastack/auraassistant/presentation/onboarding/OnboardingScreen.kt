@@ -1,70 +1,189 @@
 package com.kastack.auraassistant.presentation.onboarding
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kastack.auraassistant.ui.theme.AuraPurpleLight
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OnboardingScreen(
     onOnboardingComplete: () -> Unit,
     viewModel: OnboardingViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val scope   = rememberCoroutineScope()
 
-    AnimatedContent(
-        targetState = uiState.currentStep,
-        transitionSpec = {
-            if (targetState > initialState) {
-                slideInHorizontally { it } + fadeIn() togetherWith
-                        slideOutHorizontally { -it } + fadeOut()
+    val pagerState = rememberPagerState(
+        initialPage = uiState.currentStep,
+        pageCount = { 3 }
+    )
+
+    LaunchedEffect(uiState.currentStep) {
+        if (pagerState.currentPage != uiState.currentStep) {
+            pagerState.animateScrollToPage(uiState.currentStep)
+        }
+    }
+
+    LaunchedEffect(pagerState.currentPage) {
+        val page = pagerState.currentPage
+        if (page != uiState.currentStep) {
+            if (page > uiState.currentStep) {
+                val advanced = viewModel.goToNextStep()
+                if (!advanced) {
+                    scope.launch {
+                        pagerState.animateScrollToPage(uiState.currentStep)
+                    }
+                }
             } else {
-                slideInHorizontally { -it } + fadeIn() togetherWith
-                        slideOutHorizontally { it } + fadeOut()
+                viewModel.goToPreviousStep()
             }
-        },
-        label = "onboarding_step"
-    ) { step ->
-        when (step) {
-            0 -> ValuePropsStep(onNext = { viewModel.goToNextStep() })
-            1 -> ProfileStep(
-                uiState = uiState,
-                onNameChange = viewModel::onNameChange,
-                onAgeChange = viewModel::onAgeChange,
-                onPhoneChange = viewModel::onPhoneChange,
-                onOtpChange = viewModel::onOtpChange,
-                onSendOtp = viewModel::sendOtp,
-                onVerifyOtp = viewModel::verifyOtp,
-                onNext = { viewModel.goToNextStep() },
-                onBack = viewModel::goToPreviousStep
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            userScrollEnabled = true
+        ) { page ->
+            when (page) {
+                0 -> ValuePropsStep(
+                    onNext = {
+                        scope.launch {
+                            if (viewModel.goToNextStep()) {
+                                pagerState.animateScrollToPage(1)
+                            }
+                        }
+                    }
+                )
+                1 -> ProfileStep(
+                    uiState = uiState,
+                    onNameChange = viewModel::onNameChange,
+                    onAgeChange  = viewModel::onAgeChange,
+                    onPhoneChange = viewModel::onPhoneChange,
+                    onOtpChange  = viewModel::onOtpChange,
+                    onSendOtp    = viewModel::sendOtp,
+                    onVerifyOtp  = viewModel::verifyOtp,
+                    onNext = {
+                        scope.launch {
+                            if (viewModel.goToNextStep()) {
+                                pagerState.animateScrollToPage(2)
+                            }
+                        }
+                    },
+                    onBack = {
+                        scope.launch {
+                            viewModel.goToPreviousStep()
+                            pagerState.animateScrollToPage(0)
+                        }
+                    }
+                )
+                2 -> PersonalityStep(
+                    uiState = uiState,
+                    onToggleTrait = viewModel::toggleTrait,
+                    onBack = {
+                        scope.launch {
+                            viewModel.goToPreviousStep()
+                            pagerState.animateScrollToPage(1)
+                        }
+                    },
+                    onComplete = { viewModel.completeOnboarding(onOnboardingComplete) }
+                )
+            }
+        }
+
+        StepDotsIndicator(
+            currentStep = pagerState.currentPage,
+            totalSteps  = 3,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 52.dp)
+        )
+    }
+}
+
+@Composable
+private fun StepDotsIndicator(
+    currentStep: Int,
+    totalSteps: Int,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(totalSteps) { index ->
+            val isActive = index == currentStep
+            val width by animateDpAsState(
+                targetValue = if (isActive) 24.dp else 8.dp,
+                animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                label = "dot_width_$index"
             )
-            2 -> PersonalityStep(
-                uiState = uiState,
-                onToggleTrait = viewModel::toggleTrait,
-                onBack = viewModel::goToPreviousStep,
-                onComplete = { viewModel.completeOnboarding(onOnboardingComplete) }
+            Box(
+                modifier = Modifier
+                    .height(8.dp)
+                    .width(width)
+                    .background(
+                        color = if (isActive) AuraPurpleLight
+                        else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(50)
+                    )
             )
         }
     }
@@ -92,7 +211,7 @@ fun ValuePropsStep(onNext: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(32.dp),
+            .padding(top = 80.dp, start = 32.dp, end = 32.dp, bottom = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -151,7 +270,7 @@ fun ValuePropsStep(onNext: () -> Unit) {
                     .height(52.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text("Get Started", fontWeight = FontWeight.SemiBold)
+                Text("Get Started  →", fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -174,12 +293,19 @@ fun ProfileStep(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(32.dp),
+            .padding(top = 80.dp, start = 32.dp, end = 32.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Spacer(Modifier.height(24.dp))
-        Text("Tell us about you", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("This stays on your device", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground.copy(0.6f))
+        Text(
+            "Tell us about you",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            "This stays on your device",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(0.6f)
+        )
         Spacer(Modifier.height(8.dp))
 
         AuraTextField(
@@ -235,10 +361,7 @@ fun ProfileStep(
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("Back") }
-            Button(
-                onClick = { onNext() },
-                modifier = Modifier.weight(1f)
-            ) { Text("Continue") }
+            Button(onClick = onNext, modifier = Modifier.weight(1f)) { Text("Continue") }
         }
     }
 }
@@ -262,11 +385,14 @@ fun PersonalityStep(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
-            .padding(32.dp),
+            .padding(top = 80.dp, start = 32.dp, end = 32.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Spacer(Modifier.height(24.dp))
-        Text("Your Personality", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text(
+            "Your Personality",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
         Text(
             "Pick 3 traits — Aura adapts its responses to match your style.",
             style = MaterialTheme.typography.bodyMedium,
@@ -284,19 +410,23 @@ fun PersonalityStep(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             allTraits.forEach { trait ->
-                val selected = trait in uiState.selectedTraits
+                val selected  = trait in uiState.selectedTraits
                 val canSelect = selected || uiState.selectedTraits.size < 3
                 TraitChip(
-                    label = trait,
+                    label    = trait,
                     selected = selected,
-                    enabled = canSelect,
-                    onClick = { onToggleTrait(trait) }
+                    enabled  = canSelect,
+                    onClick  = { onToggleTrait(trait) }
                 )
             }
         }
 
         uiState.traitError?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         Spacer(Modifier.height(16.dp))
@@ -310,9 +440,9 @@ fun PersonalityStep(
 
 @Composable
 fun TraitChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    val background = if (selected) AuraPurpleLight else Color.Transparent
+    val background   = if (selected) AuraPurpleLight else Color.Transparent
     val contentColor = if (selected) Color.White else MaterialTheme.colorScheme.onSurface
-    val borderColor = if (selected) AuraPurpleLight else MaterialTheme.colorScheme.outline
+    val borderColor  = if (selected) AuraPurpleLight else MaterialTheme.colorScheme.outline
 
     Box(
         modifier = Modifier

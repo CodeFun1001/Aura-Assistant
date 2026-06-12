@@ -6,40 +6,30 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.kastack.auraassistant.audio.SpeechState
+import com.kastack.auraassistant.R
 import com.kastack.auraassistant.domain.models.AssistantState
 import com.kastack.auraassistant.domain.models.Reminder
+import com.kastack.auraassistant.domain.models.SyncStatus
 import com.kastack.auraassistant.presentation.components.AuraCircle
 import java.text.SimpleDateFormat
 import java.util.*
-import androidx.compose.ui.res.painterResource
-import com.kastack.auraassistant.R
-
-private val dateFormat = SimpleDateFormat("EEEE, d MMMM", Locale.getDefault())
-private val reminderTimeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
 
 @Composable
 fun HomeScreen(
@@ -47,29 +37,11 @@ fun HomeScreen(
     onNavigateToReminders: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val uiState        by viewModel.uiState.collectAsStateWithLifecycle()
     val assistantState by viewModel.assistantState.collectAsStateWithLifecycle()
-    val amplitude by viewModel.amplitude.collectAsStateWithLifecycle()
-    val speechState by viewModel.speechState.collectAsStateWithLifecycle()
-    val listState = rememberLazyListState()
-    val focusRequester = remember { FocusRequester() }
-
-    val scrollOffset by remember {
-        derivedStateOf {
-            listState.firstVisibleItemIndex * 1f +
-                    listState.firstVisibleItemScrollOffset / 600f
-        }
-    }
-    val auraAlpha by animateFloatAsState(
-        targetValue = (1f - scrollOffset * 0.9f).coerceIn(0f, 1f),
-        animationSpec = tween(80),
-        label = "aura_alpha"
-    )
-    val auraTranslationY by animateFloatAsState(
-        targetValue = -scrollOffset * 40f,
-        animationSpec = tween(80),
-        label = "aura_parallax"
-    )
+    val amplitude      by viewModel.amplitude.collectAsStateWithLifecycle()
+    val syncStatus     by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val todayReminders by viewModel.todayReminders.collectAsStateWithLifecycle()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -80,428 +52,349 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(uiState.showKeyboard) {
-        if (uiState.showKeyboard) focusRequester.requestFocus()
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val THRESHOLD = 220f
+
+    val swipeFraction = (-dragOffset / THRESHOLD).coerceIn(0f, 1f)
+    val circleAlpha   = 1f - swipeFraction
+    val circleOffsetY = dragOffset * 0.55f
+
+    val animatedOffset by animateFloatAsState(
+        targetValue = dragOffset,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "drag_spring"
+    )
+
+    LaunchedEffect(dragOffset) {
+        if (dragOffset < -THRESHOLD) {
+            dragOffset = 0f
+            onNavigateToChat()
+        }
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background
-    ) { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-        ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 120.dp)
-            ) {
-                item(key = "hero") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 56.dp, bottom = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        GreetingHeader(
-                            name = uiState.userProfile.name,
-                            assistantState = assistantState
-                        )
-
-                        Spacer(Modifier.height(32.dp))
-
-                        Box(
-                            modifier = Modifier
-                                .alpha(auraAlpha)
-                                .graphicsLayer { translationY = auraTranslationY },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            AuraCircle(
-                                state = assistantState,
-                                amplitude = amplitude,
-                                size = 280.dp
-                            )
-                        }
-
-                        Spacer(Modifier.height(16.dp))
-
-                        AnimatedContent(
-                            targetState = stateLabel(assistantState),
-                            transitionSpec = {
-                                fadeIn(tween(200)) togetherWith fadeOut(tween(200))
-                            },
-                            label = "state_label"
-                        ) { label ->
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
-                            )
+                .systemBarsPadding()
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragEnd = {
+                            if (dragOffset > -THRESHOLD) dragOffset = 0f
+                        },
+                        onDragCancel = { dragOffset = 0f }
+                    ) { _, dragAmount ->
+                        if (dragAmount < 0 || dragOffset < 0f) {
+                            dragOffset = (dragOffset + dragAmount).coerceIn(-THRESHOLD * 1.1f, 0f)
                         }
                     }
                 }
-
-                item(key = "chips") {
-                    QuickActionChips(
-                        onNavigateToChat = onNavigateToChat,
-                        onNavigateToReminders = onNavigateToReminders,
-                        modifier = Modifier.padding(horizontal = 20.dp)
-                    )
-                }
-
-                if (uiState.todayReminders.isNotEmpty()) {
-                    item(key = "reminders_header") {
-                        Spacer(Modifier.height(20.dp))
-                        Text(
-                            "Today",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                            modifier = Modifier.padding(horizontal = 20.dp)
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
-                    items(
-                        items = uiState.todayReminders,
-                        key = { it.id }
-                    ) { reminder ->
-                        ReminderChip(reminder = reminder)
-                    }
-                }
-
-                item(key = "history_hint") {
-                    Spacer(Modifier.height(24.dp))
-                    Text(
-                        "↑ Scroll for chat history",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .wrapContentWidth(Alignment.CenterHorizontally)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-
-            HomeInputBar(
-                inputText = uiState.inputText,
-                showKeyboard = uiState.showKeyboard,
-                assistantState = assistantState,
-                hasMicPermission = uiState.hasMicPermission,
-                focusRequester = focusRequester,
-                onInputChange = viewModel::onInputChange,
-                onSend = { viewModel.sendMessage() },
-                onToggleKeyboard = viewModel::toggleKeyboard,
-                onMicClick = {
-                    if (uiState.hasMicPermission) {
-                        if (assistantState is AssistantState.Listening) viewModel.stopListening()
-                        else viewModel.startListening()
-                    } else {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
-
-            if (assistantState is AssistantState.Error) {
-                ErrorBanner(
-                    state = assistantState as AssistantState.Error,
-                    onRetry = viewModel::retry,
-                    onDismiss = viewModel::dismissError,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 100.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun GreetingHeader(name: String, assistantState: AssistantState) {
-    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-    val timeOfDay = when {
-        hour < 12 -> "Good morning"
-        hour < 17 -> "Good afternoon"
-        else -> "Good evening"
-    }
-    val displayName = name.ifBlank { null }
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(horizontal = 24.dp)
-    ) {
-        Text(
-            text = if (displayName != null) "$timeOfDay, $displayName" else timeOfDay,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = dateFormat.format(Date()),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f)
-        )
-    }
-}
-
-@Composable
-private fun QuickActionChips(
-    onNavigateToChat: () -> Unit,
-    onNavigateToReminders: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        AssistChip(
-            onClick = onNavigateToChat,
-            label = { Text("Chat") },
-            leadingIcon = { Icon(
-                painter = painterResource(R.drawable.chat),
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            ) }
-        )
-        AssistChip(
-            onClick = onNavigateToReminders,
-            label = { Text("Reminders") },
-            leadingIcon = { Icon(
-                painter = painterResource(R.drawable.alarm),
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            ) }
-        )
-        AssistChip(
-            onClick = onNavigateToChat,
-            label = { Text("History") },
-            leadingIcon = { Icon(
-                painter = painterResource(R.drawable.history),
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            ) }
-        )
-    }
-}
-
-@Composable
-private fun ReminderChip(reminder: Reminder) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 4.dp)
-            .background(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                painter = painterResource(R.drawable.alarm),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(reminder.title, style = MaterialTheme.typography.bodyMedium)
-        }
-        Text(
-            reminderTimeFormat.format(Date(reminder.scheduledAt)),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-        )
-    }
-}
-
-@Composable
-private fun HomeInputBar(
-    inputText: String,
-    showKeyboard: Boolean,
-    assistantState: AssistantState,
-    hasMicPermission: Boolean,
-    focusRequester: FocusRequester,
-    onInputChange: (String) -> Unit,
-    onSend: () -> Unit,
-    onToggleKeyboard: () -> Unit,
-    onMicClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val isListening = assistantState is AssistantState.Listening
-
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        tonalElevation = 4.dp,
-        shadowElevation = 8.dp,
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
-            AnimatedVisibility(
-                visible = showKeyboard,
-                enter = slideInVertically { it } + fadeIn(tween(200)),
-                exit = slideOutVertically { it } + fadeOut(tween(150))
-            ) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = onInputChange,
-                    placeholder = { Text("Ask Aura anything…") },
-                    shape = RoundedCornerShape(20.dp),
-                    maxLines = 4,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onSend() }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                        .focusRequester(focusRequester),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                )
-            }
-
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(top = 24.dp, start = 20.dp, end = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onToggleKeyboard) {
-                    AnimatedContent(
-                        targetState = showKeyboard,
-                        label = "keyboard_icon",
-                        transitionSpec = {
-                            scaleIn(tween(150)) + fadeIn() togetherWith scaleOut(tween(150)) + fadeOut()
-                        }
-                    ) { showing ->
-                        Icon(
-                            painter = painterResource(
-                                id = if (showing)
-                                    R.drawable.mic
-                                else
-                                    R.drawable.keyboard
-                            ),
-                            contentDescription = if (showing)
-                                "Switch to voice"
-                            else
-                                "Switch to keyboard",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
+                GreetingText(name = uiState.userProfile.name)
+                SyncStatusChip(syncStatus = syncStatus)
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .graphicsLayer {
+                        translationY = circleOffsetY
+                        alpha = circleAlpha.coerceIn(0f, 1f)
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                AuraCircle(
+                    state     = assistantState,
+                    amplitude = amplitude,
+                    size      = 240.dp
+                )
+
+                AnimatedVisibility(
+                    visible = assistantState is AssistantState.Idle && swipeFraction < 0.05f,
+                    enter = fadeIn(tween(500)),
+                    exit  = fadeOut(tween(300))
+                ) {
+                    Text(
+                        "↑ swipe up to open chat",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.30f)
+                    )
                 }
 
                 AnimatedContent(
-                    targetState = showKeyboard && inputText.isNotBlank(),
-                    label = "primary_action",
-                    transitionSpec = {
-                        scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy)) +
-                                fadeIn() togetherWith scaleOut(tween(120)) + fadeOut()
-                    }
-                ) { isSend ->
-                    if (isSend) {
-                        FilledIconButton(
-                            onClick = onSend,
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Default.Send, contentDescription = "Send")
+                    targetState = auraMood(assistantState, amplitude),
+                    transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(200)) },
+                    label = "mood_label"
+                ) { label ->
+                    Text(
+                        text  = label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f)
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 28.dp)
+                    .padding(horizontal = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (todayReminders.isNotEmpty()) {
+                    TodayRemindersCard(reminders = todayReminders)
+                }
+
+                MicFab(
+                    isListening = assistantState is AssistantState.Listening,
+                    onClick = {
+                        if (uiState.hasMicPermission) {
+                            if (assistantState is AssistantState.Listening) viewModel.stopListening()
+                            else viewModel.startListening()
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
-                    } else {
-                        val micScale by animateFloatAsState(
-                            targetValue = if (isListening) 1.18f else 1f,
-                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                            label = "mic_scale"
+                    }
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(28.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onNavigateToChat) {
+                        Icon(
+                            painter = painterResource(R.drawable.chat),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
                         )
-                        FilledIconButton(
-                            onClick = onMicClick,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .graphicsLayer { scaleX = micScale; scaleY = micScale },
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = if (isListening)
-                                    MaterialTheme.colorScheme.error
-                                else
-                                    MaterialTheme.colorScheme.primary
-                            )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Chat", style = MaterialTheme.typography.labelLarge)
+                    }
+                    TextButton(onClick = onNavigateToReminders) {
+                        Icon(
+                            painter = painterResource(R.drawable.alarm),
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Reminders", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+
+            val errState = assistantState
+            AnimatedVisibility(
+                visible = errState is AssistantState.Error,
+                enter = slideInVertically { -it } + fadeIn(),
+                exit  = slideOutVertically { -it } + fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 80.dp)
+            ) {
+                if (errState is AssistantState.Error) {
+                    ElevatedCard(
+                        modifier = Modifier
+                            .padding(horizontal = 20.dp)
+                            .fillMaxWidth(),
+                        colors = CardDefaults.elevatedCardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                painter = painterResource(
-                                    id = if (isListening)
-                                        R.drawable.mic_off
-                                    else
-                                        R.drawable.mic
-                                ),
-                                contentDescription = if (isListening)
-                                    "Stop listening"
-                                else
-                                    "Speak to Aura",
-                                modifier = Modifier.size(24.dp)
+                            Text(
+                                errState.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(Modifier.width(8.dp))
+                            if (errState.retryInput != null) {
+                                TextButton(onClick = viewModel::retry) { Text("Retry") }
+                            } else {
+                                TextButton(onClick = viewModel::dismissError) { Text("OK") }
+                            }
                         }
                     }
                 }
-
-                Spacer(Modifier.size(48.dp))
             }
         }
     }
 }
 
 @Composable
-private fun ErrorBanner(
-    state: AssistantState.Error,
-    onRetry: () -> Unit,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
-) {
+fun SyncStatusChip(syncStatus: SyncStatus) {
+    val (label, dotColor) = when (syncStatus) {
+        is SyncStatus.Synced  -> "Synced"  to Color(0xFF10B981)
+        is SyncStatus.Syncing -> "Syncing" to Color(0xFFF59E0B)
+        is SyncStatus.Failed  -> "Failed"  to MaterialTheme.colorScheme.error
+        is SyncStatus.Idle    -> return
+    }
+
+    SuggestionChip(
+        onClick = {},
+        label = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                val pulseAlpha by if (syncStatus is SyncStatus.Syncing) {
+                    rememberInfiniteTransition(label = "sync_pulse")
+                        .animateFloat(
+                            initialValue = 0.4f, targetValue = 1f,
+                            animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
+                            label = "pulse_alpha"
+                        )
+                } else {
+                    remember { mutableFloatStateOf(1f) }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .graphicsLayer { alpha = pulseAlpha }
+                ) {
+                    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawCircle(color = dotColor)
+                    }
+                }
+                Text(label, style = MaterialTheme.typography.labelSmall)
+            }
+        },
+        shape = RoundedCornerShape(50)
+    )
+}
+
+private val reminderTimeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+
+@Composable
+fun TodayRemindersCard(reminders: List<Reminder>) {
     ElevatedCard(
-        modifier = modifier
-            .padding(horizontal = 16.dp)
-            .fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer
-        )
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 16.dp, vertical = 10.dp)
-                .fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                state.message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier.weight(1f)
+                "Today's Reminders",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
             )
-            if (state.retryInput != null) {
-                TextButton(onClick = onRetry) { Text("Retry") }
-            } else {
-                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+            Spacer(Modifier.height(2.dp))
+            reminders.take(4).forEach { reminder ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "• ${reminder.title}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        reminderTimeFormat.format(Date(reminder.scheduledAt)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        fontSize = 11.sp
+                    )
                 }
             }
+            if (reminders.size > 4) {
+                Text(
+                    "+${reminders.size - 4} more",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun GreetingText(name: String) {
+    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    val greeting = when {
+        hour < 12 -> "Good morning"
+        hour < 17 -> "Good afternoon"
+        else      -> "Good evening"
+    }
+    val display = if (name.isNotBlank()) "$greeting, $name" else greeting
+    Text(
+        text = display,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onBackground
+    )
+}
+
+@Composable
+private fun MicFab(isListening: Boolean, onClick: () -> Unit) {
+    val scale by animateFloatAsState(
+        targetValue = if (isListening) 1.20f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "mic_scale"
+    )
+    FloatingActionButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(72.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale },
+        shape = CircleShape,
+        containerColor = if (isListening) MaterialTheme.colorScheme.error
+        else MaterialTheme.colorScheme.primary,
+        elevation = FloatingActionButtonDefaults.elevation(
+            defaultElevation = if (isListening) 12.dp else 6.dp
+        )
+    ) {
+        Icon(
+            painter = painterResource(if (isListening) R.drawable.mic_off else R.drawable.mic),
+            contentDescription = if (isListening) "Stop listening" else "Speak to Aura",
+            modifier = Modifier.size(28.dp),
+            tint = MaterialTheme.colorScheme.onPrimary
+        )
     }
 }
 
 private fun stateLabel(state: AssistantState): String = when (state) {
-    is AssistantState.Idle -> "Tap mic to speak"
-    is AssistantState.Listening -> "Listening…"
-    is AssistantState.Typing -> "Typing…"
+    is AssistantState.Idle       -> "Tap mic to speak"
+    is AssistantState.Listening  -> "Listening…"
+    is AssistantState.Typing     -> "Typing…"
     is AssistantState.Validating -> "Checking…"
     is AssistantState.Processing -> "Thinking…"
     is AssistantState.Responding -> "Responding…"
-    is AssistantState.Error -> "Something went wrong"
+    is AssistantState.Error      -> "Something went wrong"
+}
+
+private fun auraMood(state: AssistantState, amplitude: Float): String {
+    if (state !is AssistantState.Listening) return stateLabel(state)
+    return when {
+        amplitude < 0.05f -> "Aura is calm"
+        amplitude < 0.15f -> "Aura is focused"
+        amplitude < 0.30f -> "Aura is analytical"
+        amplitude < 0.50f -> "Aura is engaged"
+        amplitude < 0.70f -> "Aura is energetic"
+        else              -> "Aura is excited"
+    }
 }

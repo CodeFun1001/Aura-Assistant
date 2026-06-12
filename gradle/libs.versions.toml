@@ -1,11 +1,12 @@
 [versions]
 
+work = "2.10.1"
+hiltWork = "1.2.0"
 coreKtx = "1.15.0"
 activityCompose = "1.9.3"
 composeBom = "2024.09.00"
 lifecycleRuntimeKtx = "2.8.7"
 room = "2.7.1"
-work = "2.9.1"
 paging = "3.3.5"
 agp = "8.10.1"
 kotlin = "2.0.21"
@@ -23,6 +24,9 @@ turbine = "1.2.1"
 ksp = "2.0.21-1.0.28"
 
 [libraries]
+androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+androidx-hilt-work = { module = "androidx.hilt:hilt-work", version.ref = "hiltWork" }
+androidx-hilt-compiler = { module = "androidx.hilt:hilt-compiler", version.ref = "hiltWork" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

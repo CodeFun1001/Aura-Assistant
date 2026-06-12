@@ -26,6 +26,9 @@ interface ReminderDao {
     @Query("UPDATE reminders SET isCompleted = 1 WHERE id = :id")
     suspend fun markCompleted(id: Long)
 
+    @Query("DELETE FROM reminders WHERE id = :id")
+    suspend fun deleteReminder(id: Long)
+
     @Query("SELECT * FROM reminders WHERE isSynced = 0")
     fun getUnsyncedReminders(): Flow<List<ReminderEntity>>
 

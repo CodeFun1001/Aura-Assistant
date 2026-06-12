@@ -24,11 +24,8 @@ import javax.inject.Inject
 class UserProfileRepositoryImpl @Inject constructor(
     private val dataStore: UserProfileDataStore
 ) : UserProfileRepository {
-
     override fun getUserProfile(): Flow<UserProfile> = dataStore.userProfile
-
     override suspend fun saveUserProfile(profile: UserProfile) = dataStore.save(profile)
-
     override suspend fun isOnboardingComplete(): Boolean =
         dataStore.userProfile.first().isOnboardingComplete
 }
@@ -36,40 +33,36 @@ class UserProfileRepositoryImpl @Inject constructor(
 class ChatRepositoryImpl @Inject constructor(
     private val dao: ChatMessageDao
 ) : ChatRepository {
-
     override fun getPagedMessages(): Flow<PagingData<ChatMessage>> =
-        Pager(
-            config = PagingConfig(pageSize = 20, enablePlaceholders = false)
-        ) { dao.getPagedMessages() }
+        Pager(PagingConfig(pageSize = 20, enablePlaceholders = false)) { dao.getPagedMessages() }
             .flow
-            .map { pagingData -> pagingData.map { it.toDomain() } }
+            .map { pd -> pd.map { it.toDomain() } }
 
     override suspend fun insertMessage(message: ChatMessage): Long =
         dao.insertMessage(message.toEntity())
 
     override fun getRecentMessages(limit: Int): Flow<List<ChatMessage>> =
-        dao.getRecentMessages(limit).map { list -> list.map { it.toDomain() } }
+        dao.getRecentMessages(limit).map { it.map { e -> e.toDomain() } }
 
     override suspend fun markAsSynced(ids: List<Long>) = dao.markAsSynced(ids)
 
     override fun getUnsyncedMessages(): Flow<List<ChatMessage>> =
-        dao.getUnsyncedMessages().map { list -> list.map { it.toDomain() } }
+        dao.getUnsyncedMessages().map { it.map { e -> e.toDomain() } }
 }
 
 class ReminderRepositoryImpl @Inject constructor(
     private val dao: ReminderDao
 ) : ReminderRepository {
-
     override fun getAllReminders(): Flow<List<Reminder>> =
-        dao.getAllReminders().map { list -> list.map { it.toDomain() } }
+        dao.getAllReminders().map { it.map { e -> e.toDomain() } }
 
     override fun getTodayReminders(): Flow<List<Reminder>> {
         val cal = Calendar.getInstance()
         cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0); cal.set(Calendar.SECOND, 0)
-        val startOfDay = cal.timeInMillis
+        val start = cal.timeInMillis
         cal.set(Calendar.HOUR_OF_DAY, 23); cal.set(Calendar.MINUTE, 59); cal.set(Calendar.SECOND, 59)
-        val endOfDay = cal.timeInMillis
-        return dao.getTodayReminders(startOfDay, endOfDay).map { list -> list.map { it.toDomain() } }
+        val end = cal.timeInMillis
+        return dao.getTodayReminders(start, end).map { it.map { e -> e.toDomain() } }
     }
 
     override suspend fun insertReminder(reminder: Reminder): Long =
@@ -77,24 +70,20 @@ class ReminderRepositoryImpl @Inject constructor(
 
     override suspend fun markCompleted(id: Long) = dao.markCompleted(id)
 
+    override suspend fun deleteReminder(id: Long) = dao.deleteReminder(id)
+
     override fun getUnsyncedReminders(): Flow<List<Reminder>> =
-        dao.getUnsyncedReminders().map { list -> list.map { it.toDomain() } }
+        dao.getUnsyncedReminders().map { it.map { e -> e.toDomain() } }
 }
 
-fun ChatMessageEntity.toDomain() = ChatMessage(
-    id = id, content = content, sender = sender, timestamp = timestamp, meta = meta
-)
+fun ChatMessageEntity.toDomain() =
+    ChatMessage(id = id, content = content, sender = sender, timestamp = timestamp, meta = meta)
 
-fun ChatMessage.toEntity() = ChatMessageEntity(
-    id = id, content = content, sender = sender, timestamp = timestamp, meta = meta
-)
+fun ChatMessage.toEntity() =
+    ChatMessageEntity(id = id, content = content, sender = sender, timestamp = timestamp, meta = meta)
 
-fun ReminderEntity.toDomain() = Reminder(
-    id = id, title = title, scheduledAt = scheduledAt,
-    isCompleted = isCompleted, createdAt = createdAt
-)
+fun ReminderEntity.toDomain() =
+    Reminder(id = id, title = title, scheduledAt = scheduledAt, isCompleted = isCompleted, createdAt = createdAt)
 
-fun Reminder.toEntity() = ReminderEntity(
-    id = id, title = title, scheduledAt = scheduledAt,
-    isCompleted = isCompleted, createdAt = createdAt
-)
+fun Reminder.toEntity() =
+    ReminderEntity(id = id, title = title, scheduledAt = scheduledAt, isCompleted = isCompleted, createdAt = createdAt)

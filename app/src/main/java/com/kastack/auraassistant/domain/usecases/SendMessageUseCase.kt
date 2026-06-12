@@ -16,7 +16,9 @@ private const val PROCESSING_TIMEOUT_MS = 8_000L
 
 @Singleton
 class SendMessageUseCase @Inject constructor(
-    private val chatRepository: ChatRepository
+    private val chatRepository: ChatRepository,
+    private val createReminderUseCase: CreateReminderUseCase,
+    private val responseStyleGenerator: ResponseStyleGenerator
 ) {
     suspend operator fun invoke(
         input: String,
@@ -29,12 +31,13 @@ class SendMessageUseCase @Inject constructor(
         stateFlow.value = AssistantState.Validating(input)
         delay(120)
 
-        val userMessage = ChatMessage(
-            content = input,
-            sender = Sender.USER,
-            meta = MessageMeta(inputType = inputType)
+        chatRepository.insertMessage(
+            ChatMessage(
+                content = input,
+                sender = Sender.USER,
+                meta = MessageMeta(inputType = inputType)
+            )
         )
-        chatRepository.insertMessage(userMessage)
 
         stateFlow.value = AssistantState.Processing(input)
 
@@ -43,7 +46,6 @@ class SendMessageUseCase @Inject constructor(
         }
 
         val processingMs = System.currentTimeMillis() - startTime
-
         stateFlow.value = AssistantState.Responding(response)
         delay(200)
 
@@ -51,10 +53,7 @@ class SendMessageUseCase @Inject constructor(
             ChatMessage(
                 content = response,
                 sender = Sender.ASSISTANT,
-                meta = MessageMeta(
-                    inputType = "text",
-                    processingTimeMs = processingMs
-                )
+                meta = MessageMeta(inputType = "text", processingTimeMs = processingMs)
             )
         )
 
@@ -64,31 +63,41 @@ class SendMessageUseCase @Inject constructor(
     private suspend fun generateResponse(input: String, profile: UserProfile): String {
         delay(1_200L + (200L..800L).random())
 
+        if (input.contains("remind", ignoreCase = true)) {
+            val parsed = createReminderUseCase(input)
+            return if (parsed != null) {
+                responseStyleGenerator.reminderConfirmation(
+                    title = parsed.title,
+                    scheduledAt = parsed.scheduledAt,
+                    profile = profile
+                )
+            } else {
+                responseStyleGenerator.style(
+                    base = "I couldn't parse that reminder. Try: \"Remind me to call mom at 6 PM\"",
+                    profile = profile
+                )
+            }
+        }
+
         val name = profile.name.ifBlank { "there" }
-        val traits = profile.traits
+        val base = when {
+            input.contains("hello", ignoreCase = true) ||
+                    input.contains("hi", ignoreCase = true) ->
+                "Hey $name! I'm Aura — your offline assistant. How can I help you today?"
 
-        val tone = when {
-            "Analytical" in traits -> "analytically"
-            "Curious" in traits -> "thoughtfully"
-            "Focused" in traits -> "concisely"
-            "Creative" in traits -> "creatively"
-            "Calm" in traits -> "calmly"
-            else -> "helpfully"
-        }
-
-        return when {
-            input.contains("remind", ignoreCase = true) ->
-                "Got it, $name. I'll remember that $tone. You can view your reminders by tapping the reminders section."
-            input.contains("hello", ignoreCase = true) || input.contains("hi", ignoreCase = true) ->
-                "Hey $name! I'm Aura. How can I help you today?"
             input.contains("help", ignoreCase = true) ->
-                "Sure, $name. I'm your personal offline assistant. Ask me anything, set reminders, or just think out loud."
+                "I can help you think through problems, set reminders, or just be a sounding board. What's on your mind?"
+
             input.contains("weather", ignoreCase = true) ->
-                "I work fully offline, $name — no live weather data. But I can help you plan around it $tone!"
+                "I work fully offline $name, so I don't have live weather data. That said, I can help you plan around it!"
+
             input.length < 10 ->
-                "I hear you, $name. Could you tell me more so I can respond $tone?"
+                "Could you tell me a bit more, $name? I want to make sure I respond well."
+
             else ->
-                "Understood, $name. I've noted that $tone. Is there anything else on your mind?"
+                "Understood, $name. I've noted that. Is there anything else you'd like to explore?"
         }
+
+        return responseStyleGenerator.style(base, profile)
     }
 }
